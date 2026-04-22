@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{BOOK_TITLE}} - 拆书分析报告</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f5f5f5;
+            --bg-sidebar: #fafafa;
+            --text-primary: #333333;
+            --text-secondary: #666666;
+            --accent: #2563eb;
+            --accent-light: #dbeafe;
+            --border: #e5e5e5;
+            --shadow: rgba(0,0,0,0.1);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-primary: #1a1a2e;
+                --bg-secondary: #16213e;
+                --bg-sidebar: #0f0f23;
+                --text-primary: #eaeaea;
+                --text-secondary: #a0a0a0;
+                --accent: #60a5fa;
+                --accent-light: #1e3a5f;
+                --border: #333344;
+                --shadow: rgba(0,0,0,0.3);
+            }
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* 侧边栏导航 */
+        .sidebar {
+            width: 280px;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border);
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 20px;
+            z-index: 100;
+        }
+
+        .sidebar h1 {
+            font-size: 1.2rem;
+            margin-bottom: 10px;
+            color: var(--accent);
+        }
+
+        .sidebar .book-meta {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .nav-section {
+            margin-bottom: 15px;
+        }
+
+        .nav-section-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .nav-item {
+            display: block;
+            padding: 8px 12px;
+            color: var(--text-primary);
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .nav-item:hover {
+            background: var(--accent-light);
+            color: var(--accent);
+        }
+
+        .nav-item.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        .nav-item.chapter-link {
+            padding-left: 20px;
+            font-size: 0.85rem;
+        }
+
+        /* 主内容区 */
+        .main-content {
+            flex: 1;
+            margin-left: 280px;
+            padding: 40px;
+            max-width: 900px;
+        }
+
+        .section {
+            margin-bottom: 50px;
+            scroll-margin-top: 20px;
+        }
+
+        .section h2 {
+            font-size: 1.8rem;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--accent);
+            display: inline-block;
+        }
+
+        .section h3 {
+            font-size: 1.3rem;
+            margin: 25px 0 15px;
+            color: var(--accent);
+        }
+
+        .section h4 {
+            font-size: 1.1rem;
+            margin: 20px 0 10px;
+            color: var(--text-secondary);
+        }
+
+        /* 卡片样式 */
+        .card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+            border: 1px solid var(--border);
+        }
+
+        .card-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--accent);
+        }
+
+        /* 超短摘要 */
+        .quick-summary {
+            background: linear-gradient(135deg, var(--accent-light), var(--bg-secondary));
+            border-radius: 12px;
+            padding: 25px;
+            margin: 20px 0;
+        }
+
+        .quick-summary h3 {
+            margin-top: 0;
+        }
+
+        .key-points {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .key-point {
+            background: var(--bg-primary);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid var(--accent);
+        }
+
+        .key-point-number {
+            font-weight: bold;
+            color: var(--accent);
+            margin-right: 8px;
+        }
+
+        /* 章节摘要 */
+        .chapter-summary {
+            margin: 30px 0;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .chapter-header {
+            background: var(--bg-secondary);
+            padding: 15px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.2s;
+        }
+
+        .chapter-header:hover {
+            background: var(--accent-light);
+        }
+
+        .chapter-header h4 {
+            margin: 0;
+            color: var(--text-primary);
+        }
+
+        .chapter-pages {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .chapter-content {
+            padding: 20px;
+            display: none;
+        }
+
+        .chapter-content.active {
+            display: block;
+        }
+
+        .chapter-section {
+            margin: 15px 0;
+        }
+
+        .chapter-section-title {
+            font-weight: 600;
+            color: var(--accent);
+            margin-bottom: 8px;
+        }
+
+        /* 引用样式 */
+        .quote {
+            border-left: 4px solid var(--accent);
+            padding: 15px 20px;
+            margin: 15px 0;
+            background: var(--bg-secondary);
+            font-style: italic;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .quote-source {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: 8px;
+            font-style: normal;
+        }
+
+        /* Mermaid图表容器 */
+        .mermaid-container {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+            overflow-x: auto;
+        }
+
+        /* 论证链 */
+        .argument-chain {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin: 20px 0;
+            align-items: center;
+        }
+
+        .argument-step {
+            background: var(--accent-light);
+            padding: 12px 18px;
+            border-radius: 8px;
+            position: relative;
+        }
+
+        .argument-step::after {
+            content: '→';
+            position: absolute;
+            right: -20px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--accent);
+            font-weight: bold;
+        }
+
+        .argument-step:last-child::after {
+            content: none;
+        }
+
+        .step-number {
+            background: var(--accent);
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            margin-right: 8px;
+        }
+
+        /* Deep Research */
+        .research-item {
+            background: var(--bg-secondary);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border-left: 3px solid var(--accent);
+        }
+
+        .research-tag {
+            display: inline-block;
+            background: var(--accent);
+            color: white;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            margin-right: 8px;
+        }
+
+        /* 知识库索引 */
+        .kb-index {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .kb-item {
+            background: var(--bg-secondary);
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .kb-item:hover {
+            background: var(--accent-light);
+        }
+
+        /* 标签 */
+        .tag {
+            display: inline-block;
+            background: var(--accent-light);
+            color: var(--accent);
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            margin: 3px;
+        }
+
+        /* 列表样式 */
+        ul, ol {
+            margin: 10px 0 10px 20px;
+        }
+
+        li {
+            margin: 5px 0;
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+                transition: transform 0.3s;
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0;
+                padding: 20px;
+            }
+
+            .menu-toggle {
+                display: block;
+                position: fixed;
+                top: 20px;
+                left: 20px;
+                z-index: 200;
+                background: var(--accent);
+                color: white;
+                border: none;
+                padding: 10px 15px;
+                border-radius: 6px;
+                cursor: pointer;
+            }
+        }
+
+        /* 打印样式 */
+        @media print {
+            .sidebar {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0;
+            }
+
+            .chapter-content {
+                display: block !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <button class="menu-toggle" onclick="toggleSidebar()">☰ 目录</button>
+
+    <div class="container">
+        <aside class="sidebar" id="sidebar">
+            <h1>{{BOOK_TITLE}}</h1>
+            <div class="book-meta">
+                <p>总页数: {{TOTAL_PAGES}}页</p>
+                <p>章节数: {{CHAPTER_COUNT}}章</p>
+                <p>生成时间: {{GENERATE_TIME}}</p>
+            </div>
+
+            <nav>
+                <div class="nav-section">
+                    <div class="nav-section-title">概览</div>
+                    <a href="#quick-summary" class="nav-item">超短摘要</a>
+                    <a href="#mind-map" class="nav-item">知识导图</a>
+                    <a href="#argument-chain" class="nav-item">论证链</a>
+                </div>
+
+                <div class="nav-section">
+                    <div class="nav-section-title">章节分析</div>
+                    {{CHAPTER_NAV}}
+                </div>
+
+                <div class="nav-section">
+                    <div class="nav-section-title">扩展</div>
+                    <a href="#deep-research" class="nav-item">Deep Research</a>
+                    <a href="#knowledge-base" class="nav-item">问答知识库</a>
+                </div>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <!-- A. 超短摘要 -->
+            <section class="section" id="quick-summary">
+                <h2>A. 超短摘要</h2>
+
+                <div class="quick-summary">
+                    <h3>这本书在讲什么</h3>
+                    <p>{{BOOK_WHAT_ABOUT}}</p>
+                </div>
+
+                <h3>核心观点</h3>
+                <div class="key-points">
+                    {{KEY_POINTS}}
+                </div>
+
+                <h3>最值得记住的结论</h3>
+                <ol>
+                    {{KEY_CONCLUSIONS}}
+                </ol>
+
+                <h3>核心概念</h3>
+                <div>
+                    {{CORE_CONCEPTS}}
+                </div>
+
+                <h3>各章节间关系</h3>
+                <p>{{CHAPTER_RELATIONSHIPS}}</p>
+            </section>
+
+            <!-- C. 导图/树状结构 -->
+            <section class="section" id="mind-map">
+                <h2>C. 知识导图</h2>
+                <div class="mermaid-container">
+                    <div class="mermaid">
+{{MERMAID_MINDMAP}}
+                    </div>
+                </div>
+            </section>
+
+            <!-- B. 分章节摘要 -->
+            <section class="section" id="chapter-summaries">
+                <h2>B. 分章节摘要</h2>
+                {{CHAPTER_SUMMARIES}}
+            </section>
+
+            <!-- D. 作者论证链 -->
+            <section class="section" id="argument-chain">
+                <h2>D. 作者论证链</h2>
+                <p>作者如何一步一步得出结论：</p>
+                <div class="mermaid-container">
+                    <div class="mermaid">
+{{MERMAID_ARGUMENT_CHAIN}}
+                    </div>
+                </div>
+
+                <h3>论证步骤详解</h3>
+                {{ARGUMENT_STEPS_DETAIL}}
+            </section>
+
+            <!-- E. Deep Research扩展 -->
+            <section class="section" id="deep-research">
+                <h2>E. Deep Research 扩展</h2>
+                <p>针对每个核心观点的进一步研究方向：</p>
+                {{DEEP_RESEARCH_CONTENT}}
+            </section>
+
+            <!-- F. 可问答知识库 -->
+            <section class="section" id="knowledge-base">
+                <h2>F. 可问答知识库</h2>
+                <p>基于本书内容，可以回答以下类型的问题：</p>
+
+                <div class="card">
+                    <div class="card-title">示例问题</div>
+                    <ul>
+                        <li>"作者对 {{TOPIC_1}} 是什么态度？"</li>
+                        <li>"这本书里提到哪些公司/人物？"</li>
+                        <li>"哪些观点适合我现在的业务？"</li>
+                        <li>"第X章和第Y章有什么关联？"</li>
+                    </ul>
+                </div>
+
+                <h3>关键信息索引</h3>
+                <div class="kb-index">
+                    {{KB_INDEX}}
+                </div>
+            </section>
+
+            <footer style="margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--text-secondary); text-align: center; font-size: 0.85rem;">
+                <p>Generated by Claude Code - SplitBook Skill</p>
+            </footer>
+        </main>
+    </div>
+
+    <script>
+        // 初始化Mermaid
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+            mindmap: {
+                padding: 20
+            }
+        });
+
+        // 章节折叠功能
+        document.querySelectorAll('.chapter-header').forEach(header => {
+            header.addEventListener('click', () => {
+                const content = header.nextElementSibling;
+                content.classList.toggle('active');
+            });
+        });
+
+        // 移动端侧边栏切换
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+        }
+
+        // 导航高亮
+        const sections = document.querySelectorAll('.section');
+        const navItems = document.querySelectorAll('.nav-item');
+
+        window.addEventListener('scroll', () => {
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                if (scrollY >= sectionTop - 100) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            navItems.forEach(item => {
+                item.classList.remove('active');
+                if (item.getAttribute('href') === '#' + current) {
+                    item.classList.add('active');
+                }
+            });
+        });
+
+        // 监听深色模式变化
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+            mermaid.initialize({
+                theme: e.matches ? 'dark' : 'default'
+            });
+            location.reload();
+        });
+    </script>
+</body>
+</html>
