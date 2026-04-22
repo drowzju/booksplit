@@ -202,38 +202,176 @@ class PDFBookAnalyzer:
     # 书籍结构分析
     # ------------------------------------------------------------------ #
 
-    def analyze_book_structure(self, page_offset: int = 0) -> Dict:
+    def _get_chapter_type(self, title: str) -> str:
+        """
+        识别章节类型。
+        返回: 'main' (正文章节), 'aux' (辅助内容), 'unknown' (未知)
+        """
+        import re
+
+        title_lower = title.lower()
+
+        # 正文章节模式
+        main_patterns = [
+            r'第[\d一二三四五六七八九十]+[章部分]',  # 第X章、第一章
+            r'chapter\s*[\dIVX]+',  # Chapter 1
+            r'part\s*[\dIVX]+',      # Part I
+            r'section\s*\d+',        # Section 1 (某些技术书籍)
+        ]
+
+        for pattern in main_patterns:
+            if re.search(pattern, title, re.IGNORECASE):
+                return 'main'
+
+        # 辅助内容关键词
+        aux_keywords = [
+            '前言', 'preface', 'foreword', 'introduction', '简介',
+            '目录', 'contents', 'table of contents', 'index',
+            '附录', 'appendix', 'appendices',
+            '后记', 'epilogue', 'afterword', '结语',
+            '参考文献', 'references', 'bibliography',
+            '致谢', 'acknowledgements', 'acknowledgments',
+            '关于作者', 'about the author', '作者简介',
+            '术语表', 'glossary',
+            '摘要', 'abstract', 'summary',
+            '概述', 'overview', '总览',
+            '说明', 'notice', '声明', 'disclaimer',
+            '版权', 'copyright', '授权',
+            '版本', 'release notes', 'changelog',
+            '修订', 'revision', '勘误',
+            '推荐序', '序言', '序', 'preface by',
+            '导读', '指南', 'guide',
+            '常见问题', 'faq', 'q&a',
+            '练习', 'exercise', '习题',
+            '答案', 'solution', '参考答案',
+            '词汇', 'vocabulary', '单词表',
+            '索引', 'index',
+        ]
+
+        for keyword in aux_keywords:
+            if keyword in title_lower:
+                return 'aux'
+
+        # 如果标题很短（<5字）且不含章节号，可能是辅助内容
+        if len(title) < 5 and not re.search(r'\d', title):
+            return 'aux'
+
+        return 'unknown'
+
+    def analyze_book_structure(self, page_offset: int = 0, large_section_threshold: int = 100) -> Dict:
         """
         分析整本书结构，返回章节列表。
         page_offset: calibrate_page_offset() 返回的 offset 值。
+        large_section_threshold: 大章节阈值，超过此页数时会考虑使用二级目录细分
+
+        策略：
+        1. 先分析两级目录结构
+        2. 优先使用一级目录（Part/部分）作为切分单位
+        3. 仅当某个一级部分页数 > large_section_threshold 时，才使用其下的二级章节
+        4. 保持章节结构完整，不进行强制合并
         """
         toc = self.get_toc()
         if not toc:
             return self._auto_detect_chapters()
 
+        # 分析两级目录
+        level1_items = [t for t in toc if t["level"] == 1]
+        level2_items = [t for t in toc if t["level"] == 2]
+
+        # 如果没有一级目录，降级使用所有目录项
+        if not level1_items:
+            level1_items = toc
+
         chapters = []
-        for i, item in enumerate(toc):
-            corrected_pdf_page = item["pdf_page"] + page_offset
-            corrected_pdf_page = max(0, min(corrected_pdf_page, self.total_pages - 1))
+        ch_index = 1
 
-            if i < len(toc) - 1:
-                next_pdf_page = toc[i + 1]["pdf_page"] + page_offset
-                end_page = max(corrected_pdf_page, next_pdf_page - 1)
+        for i, l1_item in enumerate(level1_items):
+            # 计算一级部分的页数
+            l1_start = l1_item["pdf_page"] + page_offset
+            if i < len(level1_items) - 1:
+                l1_end = level1_items[i + 1]["pdf_page"] + page_offset - 1
             else:
-                end_page = self.total_pages - 1
+                l1_end = self.total_pages - 1
+            l1_start = max(0, min(l1_start, self.total_pages - 1))
+            l1_end = max(l1_start, min(l1_end, self.total_pages - 1))
+            l1_page_count = l1_end - l1_start + 1
 
-            page_count = end_page - corrected_pdf_page + 1
+            # 识别一级部分类型
+            l1_type = self._get_chapter_type(l1_item["title"])
+
+            # 如果一级部分页数超过阈值且有二级章节，则使用二级章节
+            if l1_page_count > large_section_threshold and level2_items:
+                # 找到属于当前一级部分的二级章节
+                sub_chapters = []
+                for l2_item in level2_items:
+                    l2_page = l2_item["pdf_page"] + page_offset
+                    if l1_start <= l2_page <= l1_end:
+                        sub_chapters.append(l2_item)
+
+                if sub_chapters:
+                    # 添加一级部分作为分组标记（不单独处理，只作为结构标记）
+                    chapters.append({
+                        "index": ch_index,
+                        "level": 1,
+                        "title": l1_item["title"],
+                        "chapter_type": l1_type,
+                        "suggested_handler": "main_agent" if l1_type == "aux" else "sub_agent",
+                        "start_page": l1_start + 1,
+                        "end_page": l1_end + 1,
+                        "page_count": l1_page_count,
+                        "is_part_header": True,  # 标记为部分标题，不单独分析
+                        "sub_chapters": [],
+                        "status": "pending",
+                        "json_file": None,
+                        "txt_file": None,
+                    })
+                    ch_index += 1
+
+                    # 添加二级章节
+                    for j, l2_item in enumerate(sub_chapters):
+                        l2_start = l2_item["pdf_page"] + page_offset
+                        l2_start = max(l1_start, min(l2_start, l1_end))
+                        if j < len(sub_chapters) - 1:
+                            l2_end = sub_chapters[j + 1]["pdf_page"] + page_offset - 1
+                        else:
+                            l2_end = l1_end
+                        l2_end = max(l2_start, min(l2_end, l1_end))
+                        l2_page_count = l2_end - l2_start + 1
+                        l2_type = self._get_chapter_type(l2_item["title"])
+
+                        chapters.append({
+                            "index": ch_index,
+                            "level": 2,
+                            "title": l2_item["title"],
+                            "parent_title": l1_item["title"],  # 记录所属部分
+                            "chapter_type": l2_type,
+                            "suggested_handler": "main_agent" if l2_type == "aux" else "sub_agent",
+                            "start_page": l2_start + 1,
+                            "end_page": l2_end + 1,
+                            "page_count": l2_page_count,
+                            "status": "pending",
+                            "json_file": None,
+                            "txt_file": None,
+                        })
+                        ch_index += 1
+                    continue  # 跳过默认的一级部分处理
+
+            # 默认：直接使用一级部分作为章节
+            suggested_handler = "main_agent" if l1_type == "aux" else "sub_agent"
             chapters.append({
-                "index": i + 1,
-                "level": item["level"],
-                "title": item["title"],
-                "start_page": corrected_pdf_page + 1,   # 1-indexed，人类可读
-                "end_page": end_page + 1,
-                "page_count": page_count,
+                "index": ch_index,
+                "level": 1,
+                "title": l1_item["title"],
+                "chapter_type": l1_type,
+                "suggested_handler": suggested_handler,
+                "start_page": l1_start + 1,
+                "end_page": l1_end + 1,
+                "page_count": l1_page_count,
                 "status": "pending",
                 "json_file": None,
                 "txt_file": None,
             })
+            ch_index += 1
 
         return {
             "pdf_name": self.pdf_name,
@@ -277,6 +415,8 @@ class PDFBookAnalyzer:
             "index": len(chapters) + 1,
             "level": 1,
             "title": f"Section {len(chapters) + 1}",
+            "chapter_type": "unknown",
+            "suggested_handler": "sub_agent",
             "start_page": current_start + 1,
             "end_page": self.total_pages,
             "page_count": self.total_pages - current_start,
@@ -417,7 +557,8 @@ Commands:
             for ch in structure["chapters"]:
                 start = ch["start_page"] - 1   # 0-indexed
                 end   = ch["end_page"] - 1
-                do_sample = use_sample or ch["page_count"] > 50
+                # 默认不采样，只有显式传入 --sample 时才采样
+                do_sample = use_sample
                 safe_title = re.sub(r'[^\w\s-]', '', ch["title"]).strip()
                 safe_title = re.sub(r'[-\s]+', '-', safe_title)
                 out_path = os.path.join(
