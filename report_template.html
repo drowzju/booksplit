@@ -558,12 +558,12 @@
             }
         });
 
-        // 章节折叠功能
-        document.querySelectorAll('.chapter-header').forEach(header => {
-            header.addEventListener('click', () => {
-                const content = header.nextElementSibling;
-                content.classList.toggle('active');
-            });
+        // 章节折叠功能（事件委托，兼容动态插入的章节卡片）
+        document.addEventListener('click', e => {
+            const header = e.target.closest('.chapter-header');
+            if (!header) return;
+            const content = header.nextElementSibling;
+            if (content) content.classList.toggle('active');
         });
 
         // 移动端侧边栏切换
