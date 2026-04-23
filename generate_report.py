@@ -53,6 +53,7 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
                 ch['end_page'] = s_ch.get('end_page', 0)
                 ch['index'] = idx
                 ch['level'] = s_ch.get('level', 1)  # 保留层级信息
+                ch['chapter_type'] = s_ch.get('chapter_type', 'unknown')  # 保留章节类型用于过滤
                 chapters.append(ch)
         else:
             # 章节分析结果不存在，使用结构信息创建占位
@@ -62,6 +63,7 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
                 'start_page': s_ch.get('start_page', 0),
                 'end_page': s_ch.get('end_page', 0),
                 'level': s_ch.get('level', 1),
+                'chapter_type': s_ch.get('chapter_type', 'unknown'),
                 'status': 'pending',
                 'core_question': '待分析',
                 'key_points': [],
@@ -100,10 +102,10 @@ def generate_mindmap(chapters, book_title="Book"):
     main_parts = [ch for ch in chapters if ch.get('level', 1) == 1
                   and ch.get('chapter_type') == 'main']
 
-    # 如果没有main类型的一级章节，则使用非aux类型的一级章节（排除辅助内容）
+    # 如果没有main类型的一级章节，则使用非aux/unknown类型的一级章节（排除辅助内容和未识别内容）
     if not main_parts:
         main_parts = [ch for ch in chapters if ch.get('level', 1) == 1
-                      and ch.get('chapter_type') != 'aux']
+                      and ch.get('chapter_type') not in ('aux', 'unknown')]
 
     # 构建一级 -> 二级的映射
     part_tree = []
@@ -113,7 +115,7 @@ def generate_mindmap(chapters, book_title="Book"):
         sub_chapters = [ch for ch in chapters
                         if ch.get('level', 1) == 2
                         and ch.get('parent_index') == part_idx
-                        and ch.get('chapter_type') != 'aux']
+                        and ch.get('chapter_type') not in ('aux', 'unknown')]
 
         # 如果没有 parent_index 字段，使用 index 范围判断
         if not sub_chapters:
@@ -126,7 +128,7 @@ def generate_mindmap(chapters, book_title="Book"):
                             if ch.get('level', 1) == 2
                             and ch['index'] > part_idx
                             and (next_part_idx is None or ch['index'] < next_part_idx)
-                            and ch.get('chapter_type') != 'aux']
+                            and ch.get('chapter_type') not in ('aux', 'unknown')]
 
         part_tree.append((part, sub_chapters))
 
