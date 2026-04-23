@@ -95,64 +95,83 @@ def truncate(text, max_len=60):
 
 
 def generate_mindmap(chapters, book_title="Book"):
-    """生成思维导图 - 使用层级结构展示，包含关键内容摘要"""
-    lines = ["mindmap"]
-    # 根节点
-    root_title = book_title[:10] + "..." if len(book_title) > 12 else book_title
-    lines.append(f'  root(({escape_html(root_title)}))')
+    """生成思维导图 - 使用嵌套HTML树状结构展示，无节点数量限制"""
+    # 收集一级主章节（level=1, chapter_type='main'）
+    main_parts = [ch for ch in chapters if ch.get('level', 1) == 1
+                  and ch.get('chapter_type') != 'aux']
 
-    import re
+    # 如果没有main类型的一级章节，则使用所有一级章节
+    if not main_parts:
+        main_parts = [ch for ch in chapters if ch.get('level', 1) == 1]
 
-    # 按一级部分分组
-    current_part = None
-    part_nodes = []
-    current_part_chapters = []
+    # 构建一级 -> 二级的映射
+    part_tree = []
+    for part in main_parts:
+        part_idx = part['index']
+        # 收集该一级章节下的二级子章节（level=2，index 在 part 之后且下一个 level=1 之前）
+        sub_chapters = [ch for ch in chapters
+                        if ch.get('level', 1) == 2
+                        and ch.get('parent_index') == part_idx]
 
-    for ch in chapters:
-        if ch.get('level', 1) == 1:
-            # 保存上一个部分
-            if current_part and current_part_chapters:
-                part_nodes.append((current_part, current_part_chapters))
-            # 开始新部分
-            current_part = ch
-            current_part_chapters = []
-        elif current_part:
-            current_part_chapters.append(ch)
-
-    # 处理最后一部分
-    if current_part and current_part_chapters:
-        part_nodes.append((current_part, current_part_chapters))
-
-    # 如果没有分组（只有一级章节），直接使用章节列表
-    if not part_nodes:
-        part_nodes = [(ch, []) for ch in chapters if ch.get('level', 1) == 1][:8]
-
-    # 生成思维导图节点
-    for part, sub_chapters in part_nodes[:8]:  # 最多8个主要部分
-        title = part.get('title', 'Part')
-        # 提取简短标题 - 使用更大的长度保留完整语义
-        short_title = extract_chapter_short_name(title, max_len=25)
-
-        lines.append(f"    {escape_html(short_title)}")
-
-        # 如果有子章节，添加子节点（最多4个）
-        for sub in sub_chapters[:4]:
-            sub_short = extract_chapter_short_name(sub.get('title', ''), max_len=20)
-            lines.append(f"      {escape_html(sub_short)}")
-
-        # 如果没有子章节，添加核心问题和关键论点作为子节点
+        # 如果没有 parent_index 字段，使用 index 范围判断
         if not sub_chapters:
-            core_q = part.get('core_question', '')
+            next_part_idx = None
+            for other in main_parts:
+                if other['index'] > part_idx:
+                    next_part_idx = other['index']
+                    break
+            sub_chapters = [ch for ch in chapters
+                            if ch.get('level', 1) == 2
+                            and ch['index'] > part_idx
+                            and (next_part_idx is None or ch['index'] < next_part_idx)]
+
+        part_tree.append((part, sub_chapters))
+
+    # 生成HTML
+    short_title = extract_chapter_short_name(book_title, max_len=30)
+    html_parts = [f'<div class="mindmap-tree">',
+                  f'<ul><li class="mindmap-root">{escape_html(short_title)}</li><ul>']
+
+    for part, subs in part_tree:
+        part_short = extract_chapter_short_name(part.get('title', ''), max_len=30)
+        core_q = part.get('core_question', '')
+
+        if subs:
+            # 有子章节：生成可折叠的一级节点
+            html_parts.append(
+                f'<li class="level1"><details open>'
+                f'<summary>{escape_html(part_short)}</summary><ul>'
+            )
+            for sub in subs:
+                sub_short = extract_chapter_short_name(sub.get('title', ''), max_len=25)
+                sub_q = sub.get('core_question', '')
+                tooltip = f' title="{escape_html(sub_q)}"' if sub_q else ''
+                html_parts.append(
+                    f'<li class="level2"{tooltip}>{escape_html(sub_short)}</li>'
+                )
+            html_parts.append('</ul></details></li>')
+        else:
+            # 无子章节：用 core_question + key_points 作为子节点
+            children = []
             if core_q:
-                q_short = truncate(core_q, 18)
-                lines.append(f"      {escape_html(q_short)}")
+                children.append(f'<li class="level2">{escape_html(truncate(core_q, 60))}</li>')
+            for kp in part.get('key_points', [])[:3]:
+                children.append(f'<li class="level2">{escape_html(truncate(kp, 60))}</li>')
 
-            key_points = part.get('key_points', [])
-            for kp in key_points[:2]:
-                kp_short = truncate(kp, 15)
-                lines.append(f"      {escape_html(kp_short)}")
+            if children:
+                html_parts.append(
+                    f'<li class="level1"><details open>'
+                    f'<summary>{escape_html(part_short)}</summary><ul>'
+                )
+                html_parts.extend(children)
+                html_parts.append('</ul></details></li>')
+            else:
+                html_parts.append(
+                    f'<li class="level1">{escape_html(part_short)}</li>'
+                )
 
-    return "\n".join(lines)
+    html_parts.append('</ul></li></ul></div>')
+    return '\n'.join(html_parts)
 
 
 def is_chapter_title(title):
@@ -220,53 +239,6 @@ def extract_chapter_short_name(title, max_len=20):
     return title[:max_len-3] + "..." if len(title) > max_len else title
 
 
-def generate_argument_chain(chapters):
-    """生成论证链 - 显示章节级别的详细脉络"""
-    lines = ["flowchart LR"]
-
-    # 收集所有非辅助内容的章节
-    valid_chapters = []
-    for ch in chapters:
-        title = ch.get('title', '')
-        ch_type = ch.get('chapter_type', 'unknown')
-        # 跳过明显的辅助内容
-        if ch_type == 'aux' or not is_chapter_title(title):
-            continue
-        valid_chapters.append(ch)
-
-    if not valid_chapters:
-        valid_chapters = [ch for ch in chapters if is_chapter_title(ch.get('title', ''))]
-
-    # 按部分分组显示
-    prev_node = "Start"
-    for i, ch in enumerate(valid_chapters[:15], 1):  # 最多15个节点
-        level = ch.get('level', 1)
-        title = ch.get('title', '')
-
-        # 根据层级决定节点样式
-        if level == 1:
-            # 一级部分显示完整标题
-            short_title = extract_chapter_short_name(title, max_len=15)
-            node_style = f'Ch{i}["{escape_html(short_title)}"]'
-        else:
-            # 二级章节显示简短标题
-            short_title = extract_chapter_short_name(title, max_len=12)
-            node_style = f'Ch{i}(("{escape_html(short_title)}"))'
-
-        lines.append(f'    {prev_node} --> {node_style}')
-
-        # 添加论证逻辑说明
-        argument = ch.get('argument_logic', '')
-        if argument:
-            arg_short = truncate(argument, 20)
-            lines.append(f'    Ch{i} -.->|"{escape_html(arg_short)}"| Ch{i}Desc')
-
-        prev_node = f"Ch{i}"
-
-    lines.append(f'    {prev_node} --> End["总结"]')
-    return "\n".join(lines)
-
-
 def generate_report_html(structure, chapters):
     """生成完整HTML报告"""
     book_title = structure.get('pdf_name', '书籍分析报告')
@@ -297,12 +269,12 @@ def generate_report_html(structure, chapters):
         num = ["①", "②", "③"][i-1]
         key_points_html += f'<div class="key-point"><span class="key-point-number">{num}</span>{escape_html(point)}</div>\n'
 
-    # 章节导航
+    # 章节导航 - 直接使用原书标题，不添加人工编号
     chapter_nav_html = ""
     for ch in chapters:
         idx = ch['index']
-        title = truncate(ch.get('title', f'第{idx}章'), 20)
-        chapter_nav_html += f'<a href="#ch-{idx}" class="nav-item chapter-link">第{idx}章 {title}</a>\n'
+        title = truncate(ch.get('title', ''), 20)
+        chapter_nav_html += f'<a href="#ch-{idx}" class="nav-item chapter-link">{title}</a>\n'
 
     # 章节摘要
     chapter_summaries_html = ""
@@ -319,8 +291,15 @@ def generate_report_html(structure, chapters):
         # 案例
         cases_html = ""
         for case in ch.get('key_cases', [])[:3]:
-            case_text = case['case'] if isinstance(case, dict) else case
-            page = case.get('page', '') if isinstance(case, dict) else ''
+            if isinstance(case, dict):
+                case_text = case.get('case', '')
+                page = case.get('page', '')
+            elif isinstance(case, str):
+                case_text = case
+                page = ''
+            else:
+                case_text = str(case)
+                page = ''
             cases_html += f'<div class="quote"><p>{escape_html(case_text)}</p><div class="quote-source">p.{page}</div></div>\n'
 
         # 引用
@@ -333,7 +312,7 @@ def generate_report_html(structure, chapters):
         chapter_summaries_html += f'''
 <div class="chapter-summary" id="ch-{idx}">
     <div class="chapter-header">
-        <h4>第{idx}章 · {escape_html(ch.get('title', '未知章节'))}{sampled_tag}</h4>
+        <h4>{escape_html(ch.get('title', '未知章节'))}{sampled_tag}</h4>
         <span class="chapter-pages">P{ch['start_page']}-{ch['end_page']}</span>
     </div>
     <div class="chapter-content">
@@ -546,6 +525,106 @@ def generate_report_html(structure, chapters):
             font-size: 0.8rem;
             margin: 3px;
         }}
+        /* xmind-style tree mindmap */
+        .tree-container {{
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+            overflow-x: auto;
+        }}
+        .mindmap-tree {{
+            display: flex;
+            flex-direction: column;
+            max-height: 80vh;
+            overflow-y: auto;
+        }}
+        .mindmap-tree > ul {{
+            border-left: 3px solid var(--accent);
+            padding-left: 24px;
+            list-style: none;
+            margin: 0;
+        }}
+        .mindmap-tree > ul > li {{
+            margin: 4px 0;
+        }}
+        .mindmap-tree li {{
+            list-style: none;
+            position: relative;
+            margin: 4px 0;
+        }}
+        .mindmap-tree li::before {{
+            content: "";
+            position: absolute;
+            left: -24px;
+            top: 16px;
+            width: 21px;
+            height: 0;
+            border-top: 2px solid var(--border);
+        }}
+        .mindmap-tree li.level1 > details > summary {{
+            display: inline-block;
+            background: var(--accent-light);
+            color: var(--text-primary);
+            padding: 6px 14px;
+            border-radius: 6px;
+            border: 1px solid var(--accent);
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            list-style: none;
+        }}
+        .mindmap-tree li.level1 > details > summary::-webkit-details-marker,
+        .mindmap-tree li.level1 > details > summary::marker {{
+            display: none;
+        }}
+        .mindmap-tree li.level1 > details > summary::before {{
+            content: "\25B6";
+            display: inline-block;
+            margin-right: 6px;
+            font-size: 0.7rem;
+            transition: transform 0.2s;
+            color: var(--accent);
+        }}
+        .mindmap-tree li.level1 > details[open] > summary::before {{
+            content: "\25BC";
+        }}
+        .mindmap-tree li.level1 > details > summary:hover {{
+            background: var(--accent);
+            color: #fff;
+        }}
+        .mindmap-tree li.level1 > details > ul {{
+            border-left: 2px solid var(--border);
+            padding-left: 20px;
+            margin-top: 6px;
+            list-style: none;
+        }}
+        .mindmap-tree li.level2 {{
+            display: inline-block;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            padding: 4px 12px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            margin: 3px 4px;
+            font-size: 0.9rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            cursor: default;
+        }}
+        .mindmap-tree li.level2:hover {{
+            border-color: var(--accent);
+            box-shadow: 0 0 6px var(--accent-light);
+        }}
+        .mindmap-root {{
+            display: inline-block;
+            background: var(--accent);
+            color: #fff;
+            padding: 8px 20px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 1.1rem;
+            margin-bottom: 12px;
+        }}
         ul, ol {{ margin: 10px 0 10px 20px; }}
         li {{ margin: 5px 0; }}
         @media (max-width: 768px) {{
@@ -586,16 +665,8 @@ def generate_report_html(structure, chapters):
             </section>
             <section id="mindmap" class="section">
                 <h2>全书思维导图</h2>
-                <div class="mermaid-container">
-                    <pre class="mermaid">
-{generate_mindmap(chapters, book_title)}
-                    </pre>
-                </div>
-                <h3>论证脉络</h3>
-                <div class="mermaid-container">
-                    <pre class="mermaid">
-{generate_argument_chain(chapters)}
-                    </pre>
+                <div class="tree-container">
+                    {generate_mindmap(chapters, book_title)}
                 </div>
             </section>
             <section id="chapters" class="section">

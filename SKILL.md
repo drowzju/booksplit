@@ -325,13 +325,12 @@ python generate_report.py <output_dir>
 ```
 
 报告包含：
-- **思维导图**：展示书籍层级结构，包含关键论点摘要
-  - 一级节点：主要部分（Part）标题
-  - 二级节点：子章节或核心问题/关键论点
-- **论证脉络**：章节级别的详细论证流程图
-  - 显示章节间的逻辑关系
-  - 标注每个章节的核心论证内容
-- **章节详情**：完整的章节分析卡片
+- **思维导图**：使用矩形树状结构（xmind风格）展示书籍层级结构，无节点数量限制
+  - 根节点：书名
+  - 一级节点：主要部分（Part）标题，可折叠/展开
+  - 二级节点：子章节标题，悬停显示完整core_question
+  - 无子章节时：显示core_question和关键论点
+- **章节详情**：完整的章节分析卡片（含"论证逻辑"section）
 
 输出：`book_output/book_analysis_report.html`（浏览器直接打开）
 
@@ -339,15 +338,12 @@ python generate_report.py <output_dir>
 
 `generate_report.py` 生成可视化图表时，根据两级目录结构智能展示：
 
-**思维导图**：
-- 一级节点：主要部分（Part）标题，最多8个
-- 二级节点：子章节 或 核心问题/关键论点（当无子章节时）
-- 节点标题保留更多语义，支持最多25个中文字符
-
-**论证脉络**：
-- 显示章节级别的详细论证流程
-- 一级部分使用矩形节点，二级章节使用圆角节点
-- 最多15个节点，自动过滤辅助内容
+**思维导图**（HTML嵌套树状结构）：
+- 根节点：书名（accent色矩形）
+- 一级节点：主要部分（Part）标题，不限制数量，支持折叠/展开
+- 二级节点：子章节标题，无数量限制，悬停显示core_question
+- 无子章节时：自动显示该章节的core_question和key_points作为子节点
+- 过滤辅助内容（chapter_type == 'aux'的一级章节）
 
 **标题智能提取策略**：
 1. 中文书籍：提取"第X章" + 前10字关键词（保留完整语义）
@@ -373,9 +369,8 @@ python generate_report.py <output_dir>
 | `{{CORE_CONCEPTS}}` | 各章 `entities` 合并 + 高频术语 | `<span class="tag">词</span>` |
 | `{{CHAPTER_RELATIONSHIPS}}` | 各章 `relation_to_book` 串联 | 1段话 |
 | `{{CHAPTER_NAV}}` | `chapters` 列表 | `<a href="#ch-N" class="nav-item chapter-link">第N章 标题</a>` |
-| `{{MERMAID_MINDMAP}}` | 主Agent基于全书结构生成 | mindmap语法，节点≤15字 |
+| `{{MERMAID_MINDMAP}}` | 主Agent基于全书结构生成 | HTML嵌套树状结构（ul/li/details） |
 | `{{CHAPTER_SUMMARIES}}` | 各章JSON → HTML卡片 | 见章节卡片模板 |
-| `{{MERMAID_ARGUMENT_CHAIN}}` | 各章 `argument_logic` 串联 | `flowchart LR` 语法，节点≤15字 |
 | `{{ARGUMENT_STEPS_DETAIL}}` | 各章 `argument_logic` 展开 | `<div class="card">` |
 | `{{DEEP_RESEARCH_CONTENT}}` | 主Agent针对各核心论点生成扩展建议 | `<div class="research-item">` |
 | `{{TOPIC_1}}` | 全书最核心概念 | 纯文本 |
@@ -386,7 +381,7 @@ python generate_report.py <output_dir>
 ```html
 <div class="chapter-summary" id="ch-{{INDEX}}">
   <div class="chapter-header">
-    <h4>第{{INDEX}}章 · {{TITLE}}{{#if SAMPLED}} <small style="color:var(--text-secondary)">[采样]</small>{{/if}}</h4>
+    <h4>{{TITLE}}{{#if SAMPLED}} <small style="color:var(--text-secondary)">[采样]</small>{{/if}}</h4>
     <span class="chapter-pages">P{{START_PAGE}}–{{END_PAGE}}</span>
   </div>
   <div class="chapter-content">
@@ -502,9 +497,6 @@ python generate_report.py <output_dir>
 `[SAMPLED]` 章节的分析结果可靠性低于全文章节，报告卡片中会显示"[采样]"标记。
 如需更精确分析，可对该章单独运行子Agent并传入 `--sample` 关闭的全文版本。
 
-**6. Mermaid节点长度**
-mindmap 和 flowchart 节点文字不超过15字，超出截断加省略号，防止渲染溢出。
-
-**7. 章节卡片不写 onclick**
+**6. 章节卡片不写 onclick**
 `report_template.html` 已通过事件委托统一处理折叠逻辑，章节卡片中不要添加内联
 `onclick` 属性，否则会触发两次导致展开后立即收起。
