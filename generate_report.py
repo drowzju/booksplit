@@ -165,10 +165,10 @@ def generate_mindmap(chapters, book_title="Book"):
             placeholder_values = {'待分析', 'N/A', 'n/a', ''}
             children = []
             if core_q and core_q not in placeholder_values:
-                children.append(f'<li class="level2">{escape_html(truncate(core_q, 60))}</li>')
+                children.append(f'<li class="level2">{escape_html(core_q)}</li>')
             for kp in part.get('key_points', [])[:3]:
                 if kp and kp not in placeholder_values:
-                    children.append(f'<li class="level2">{escape_html(truncate(kp, 60))}</li>')
+                    children.append(f'<li class="level2">{escape_html(kp)}</li>')
 
             if children:
                 html_parts.append(
@@ -198,12 +198,12 @@ def generate_chapter_mindmap(ch):
     children = []
     if core_q and core_q not in placeholder_values:
         children.append(
-            f'<li class="cm-level2"><span class="cm-label">核心问题</span>{escape_html(truncate(core_q, 60))}</li>'
+            f'<li class="cm-level2"><span class="cm-label">核心问题</span>{escape_html(core_q)}</li>'
         )
     for kp in key_points[:5]:
         if kp and kp not in placeholder_values:
             children.append(
-                f'<li class="cm-level2"><span class="cm-label">论点</span>{escape_html(truncate(kp, 60))}</li>'
+                f'<li class="cm-level2"><span class="cm-label">论点</span>{escape_html(kp)}</li>'
             )
     for case in key_cases[:3]:
         if isinstance(case, dict):
@@ -214,7 +214,7 @@ def generate_chapter_mindmap(ch):
             case_text = str(case)
         if case_text and case_text not in placeholder_values:
             children.append(
-                f'<li class="cm-level2"><span class="cm-label">案例</span>{escape_html(truncate(case_text, 60))}</li>'
+                f'<li class="cm-level2"><span class="cm-label">案例</span>{escape_html(case_text)}</li>'
             )
 
     if not children:
@@ -331,7 +331,7 @@ def generate_report_html(structure, chapters):
         if ch.get('chapter_type') == 'aux':
             continue
         idx = ch['index']
-        title = truncate(ch.get('title', ''), 20)
+        title = truncate(ch.get('title', ''), 30)
         chapter_nav_html += f'<a href="#ch-{idx}" class="nav-item chapter-link">{title}</a>\n'
 
     # 章节摘要 - 跳过辅助内容卡片
@@ -347,7 +347,7 @@ def generate_report_html(structure, chapters):
         # 关键论点
         kp_list = ""
         for kp in ch.get('key_points', [])[:5]:
-            kp_list += f"<li>{escape_html(truncate(kp, 80))}</li>\n"
+            kp_list += f"<li>{escape_html(kp)}</li>\n"
 
         # 案例
         cases_html = ""
