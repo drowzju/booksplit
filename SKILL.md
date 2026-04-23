@@ -162,8 +162,8 @@ python pdf_analyzer.py extract_text <pdf_path> <output_dir> --offset <N>
 ```
 
 `extract_text` 命令：
-- 单章 ≤ 50页：全文提取
-- 单章 > 50页：自动按比例采样（前20% + 中间40%中心区 + 后20%，其余页只保留段落首行）
+- 单章 ≤ 120页：全文提取
+- 单章 > 120页：自动按比例采样（前20% + 中间40%中心区 + 后20%，其余页只保留段落首行）
   输出文本开头会有 `[SAMPLED]` 标记，需在子Agent prompt中告知此章为采样分析
 
 完成后 `output_dir` 内容：

@@ -246,6 +246,8 @@ class PDFBookAnalyzer:
             '答案', 'solution', '参考答案',
             '词汇', 'vocabulary', '单词表',
             '索引', 'index',
+            '封面', 'cover', 'title page', 'titlepage',
+            '版权页', 'copyright page',
         ]
 
         for keyword in aux_keywords:
