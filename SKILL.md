@@ -500,3 +500,11 @@ python generate_report.py <output_dir>
 **6. 章节卡片不写 onclick**
 `report_template.html` 已通过事件委托统一处理折叠逻辑，章节卡片中不要添加内联
 `onclick` 属性，否则会触发两次导致展开后立即收起。
+
+**7. 输出语言与原书一致**
+- 生成的所有分析内容（core_question、key_points、argument_logic、章节摘要等）
+  必须使用**与原书相同的语言**。
+- 原书为英文 → 报告用英文；原书为中文 → 报告用中文；混合语言则正文用原书主体语言。
+- HTML模板中的固定标签（如"核心问题"、"关键论点"等section标题）可保持中文，
+  但章节内容的提取、总结、分析文字必须与原书语言一致。
+- 子Agent Prompt中应明确告知此规则，避免默认输出中文。
