@@ -122,8 +122,8 @@ class PDFBookAnalyzer:
 
     def _title_keywords(self, title: str) -> List[str]:
         """从标题中提取2-3个有辨识度的关键词（去掉纯数字和常见前缀）"""
-        # 去掉"第X章"、"Chapter N"等前缀
-        clean = re.sub(r'^(第\s*\d+\s*[章节部]|Chapter\s*\d+|Part\s*\d+)\s*', '',
+        # 去掉"第X章"、"Chapter N/I/IV"等前缀
+        clean = re.sub(r'^(第\s*[\d一二三四五六七八九十]+\s*[章节部]|Chapter\s*[\dIVX]+|Part\s*[\dIVX]+)\s*', '',
                        title, flags=re.IGNORECASE).strip()
         if not clean:
             clean = title
@@ -140,14 +140,14 @@ class PDFBookAnalyzer:
         """
         从指定页面范围（0-indexed）提取文本。
 
-        sample=True 时启用按比例采样，适用于超长章节（>50页），
+        sample=True 时启用按比例采样，适用于超长章节（>100页），
         策略：前20% + 中间40%中心区域 + 后20%，其余页只保留各段落首句。
         采样时在文本开头附加 [SAMPLED] 标记供调用方识别。
         """
         end_page = min(end_page, self.total_pages - 1)
         page_count = end_page - start_page + 1
 
-        if not sample or page_count <= 50:
+        if not sample or page_count <= 100:
             parts = []
             for p in range(start_page, end_page + 1):
                 text = self.doc[p].get_text()
@@ -225,7 +225,7 @@ class PDFBookAnalyzer:
 
         # 辅助内容关键词
         aux_keywords = [
-            '前言', 'preface', 'foreword', 'introduction', '简介',
+            '前言', 'preface', 'foreword', '简介',
             '目录', 'contents', 'table of contents', 'index',
             '附录', 'appendix', 'appendices',
             '后记', 'epilogue', 'afterword', '结语',
@@ -402,6 +402,8 @@ class PDFBookAnalyzer:
                                     "index": len(chapters) + 1,
                                     "level": 1,
                                     "title": f"Section {len(chapters) + 1}",
+                                    "chapter_type": "unknown",
+                                    "suggested_handler": "sub_agent",
                                     "start_page": current_start + 1,
                                     "end_page": page_num,
                                     "page_count": page_num - current_start,
@@ -448,6 +450,9 @@ class PDFBookAnalyzer:
         output_files = []
 
         for ch in structure["chapters"]:
+            # 跳过仅作为结构标记的部分标题（无实际正文内容）
+            if ch.get("is_part_header"):
+                continue
             doc_part = fitz.open()
             start = ch["start_page"] - 1   # 转为0-indexed
             end   = ch["end_page"] - 1

@@ -69,8 +69,7 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
                 'key_points': [],
                 'key_cases': [],
                 'key_quotes': [],
-                'argument_logic': '',
-                'relation_to_book': ''
+                'argument_logic': ''
             })
 
     return structure, chapters
