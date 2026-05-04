@@ -35,6 +35,20 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
     with open(structure_path, 'r', encoding='utf-8') as f:
         structure = json.load(f)
 
+    # 首先扫描所有存在的章节JSON文件，建立标题到文件路径的映射
+    title_to_file = {}
+    for filename in os.listdir(output_dir):
+        if filename.startswith('chapter_') and filename.endswith('.json') and filename != 'chapter_analysis_result.json':
+            filepath = os.path.join(output_dir, filename)
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    ch_data = json.load(f)
+                    title = ch_data.get('title', '')
+                    if title:
+                        title_to_file[title] = filepath
+            except Exception:
+                pass
+
     # 尝试加载每个章节的分析结果
     chapters = []
     for s_ch in structure.get('chapters', []):
@@ -43,27 +57,53 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
             continue
 
         idx = s_ch['index']
-        ch_file = os.path.join(output_dir, f"chapter_{idx:02d}.json")
+        title = s_ch.get('title', '')
 
-        if os.path.exists(ch_file):
-            with open(ch_file, 'r', encoding='utf-8') as f:
-                ch = json.load(f)
-                # 合并结构信息
-                ch['start_page'] = s_ch.get('start_page', 0)
-                ch['end_page'] = s_ch.get('end_page', 0)
-                ch['index'] = idx
-                ch['level'] = s_ch.get('level', 1)  # 保留层级信息
-                ch['chapter_type'] = s_ch.get('chapter_type', 'unknown')  # 保留章节类型用于过滤
-                chapters.append(ch)
+        # 优先通过标题匹配找到对应的JSON文件
+        ch_file = title_to_file.get(title)
+
+        # 注意：不再使用索引命名作为回退，因为现有文件可能按章节编号命名而非物理索引
+        # 如果找不到匹配的标题文件，则视为未分析
+
+        if ch_file and os.path.exists(ch_file):
+            try:
+                with open(ch_file, 'r', encoding='utf-8') as f:
+                    ch = json.load(f)
+                    # 合并结构信息（使用 book_structure 中的页码信息）
+                    ch['start_page'] = s_ch.get('start_page', 0)
+                    ch['end_page'] = s_ch.get('end_page', 0)
+                    ch['index'] = idx
+                    ch['level'] = s_ch.get('level', 1)
+                    ch['chapter_type'] = s_ch.get('chapter_type', 'unknown')
+                    ch['chapter_number'] = s_ch.get('chapter_number')
+                    chapters.append(ch)
+            except Exception as e:
+                print(f"Warning: Failed to load {ch_file}: {e}")
+                chapters.append({
+                    'index': idx,
+                    'title': title or f'Chapter {idx}',
+                    'start_page': s_ch.get('start_page', 0),
+                    'end_page': s_ch.get('end_page', 0),
+                    'level': s_ch.get('level', 1),
+                    'chapter_type': s_ch.get('chapter_type', 'unknown'),
+                    'chapter_number': s_ch.get('chapter_number'),
+                    'status': 'failed',
+                    'core_question': '加载失败',
+                    'key_points': [],
+                    'key_cases': [],
+                    'key_quotes': [],
+                    'argument_logic': ''
+                })
         else:
             # 章节分析结果不存在，使用结构信息创建占位
             chapters.append({
                 'index': idx,
-                'title': s_ch.get('title', f'Chapter {idx}'),
+                'title': title or f'Chapter {idx}',
                 'start_page': s_ch.get('start_page', 0),
                 'end_page': s_ch.get('end_page', 0),
                 'level': s_ch.get('level', 1),
                 'chapter_type': s_ch.get('chapter_type', 'unknown'),
+                'chapter_number': s_ch.get('chapter_number'),
                 'status': 'pending',
                 'core_question': '待分析',
                 'key_points': [],
@@ -97,60 +137,77 @@ def truncate(text, max_len=60):
 
 def generate_mindmap(chapters, book_title="Book"):
     """生成思维导图 - 使用嵌套HTML树状结构展示，无节点数量限制"""
-    # 优先收集一级主章节（level=1, chapter_type='main'）
-    main_parts = [ch for ch in chapters if ch.get('level', 1) == 1
-                  and ch.get('chapter_type') == 'main']
+    # 收集正文章节（有 chapter_number 的章节，或标题包含"第X章"的章节）
+    def is_main_chapter(ch):
+        # 有章节编号的
+        if ch.get('chapter_number'):
+            return True
+        # 或者标题符合正文章节模式
+        title = ch.get('title', '')
+        import re
+        if re.search(r'第[\d一二三四五六七八九十]+章', title):
+            return True
+        if re.search(r'Chapter\s*\d+', title, re.I):
+            return True
+        return False
 
-    # 如果没有main类型的一级章节，则使用非aux/unknown类型的一级章节（排除辅助内容和未识别内容）
-    if not main_parts:
-        main_parts = [ch for ch in chapters if ch.get('level', 1) == 1
-                      and ch.get('chapter_type') not in ('aux', 'unknown')]
+    # 优先使用有章节编号的一级主章节
+    main_chapters = [ch for ch in chapters if is_main_chapter(ch) and ch.get('level', 1) == 1]
 
-    # 构建一级 -> 二级的映射
-    part_tree = []
-    for part in main_parts:
-        part_idx = part['index']
-        # 收集该一级章节下的二级子章节（level=2，index 在 part 之后且下一个 level=1 之前）
-        sub_chapters = [ch for ch in chapters
-                        if ch.get('level', 1) == 2
-                        and ch.get('parent_index') == part_idx
-                        and ch.get('chapter_type') not in ('aux', 'unknown')]
+    # 如果没有找到，尝试使用 chapter_type='main' 的章节
+    if not main_chapters:
+        main_chapters = [ch for ch in chapters if ch.get('chapter_type') == 'main' and ch.get('level', 1) == 1]
 
-        # 如果没有 parent_index 字段，使用 index 范围判断
-        if not sub_chapters:
-            next_part_idx = None
-            for other in main_parts:
-                if other['index'] > part_idx:
-                    next_part_idx = other['index']
-                    break
-            sub_chapters = [ch for ch in chapters
-                            if ch.get('level', 1) == 2
-                            and ch['index'] > part_idx
-                            and (next_part_idx is None or ch['index'] < next_part_idx)
-                            and ch.get('chapter_type') not in ('aux', 'unknown')]
+    # 按章节编号排序（如果有的话）
+    main_chapters.sort(key=lambda x: x.get('chapter_number') or x.get('index', 999))
 
-        part_tree.append((part, sub_chapters))
+    # 构建章节树
+    chapter_tree = []
+    for ch in main_chapters:
+        ch_idx = ch['index']
+        ch_num = ch.get('chapter_number')
+
+        # 收集该章节下的二级子章节
+        sub_chapters = []
+        for sub in chapters:
+            if sub.get('level', 1) == 2:
+                # 通过 parent_chapter_number 或 index 范围判断归属
+                parent_num = sub.get('parent_chapter_number')
+                if parent_num and parent_num == ch_num:
+                    sub_chapters.append(sub)
+                else:
+                    # 通过 index 范围判断（如果二级章节在父章节之后）
+                    parent_idx = ch_idx
+                    next_main_idx = None
+                    for other in main_chapters:
+                        if other['index'] > parent_idx:
+                            next_main_idx = other['index']
+                            break
+                    if sub['index'] > parent_idx and (next_main_idx is None or sub['index'] < next_main_idx):
+                        sub_chapters.append(sub)
+
+        chapter_tree.append((ch, sub_chapters))
 
     # 生成HTML
     short_title = extract_chapter_short_name(book_title, max_len=30)
     html_parts = [f'<div class="mindmap-tree">',
                   f'<ul><li class="mindmap-root">{escape_html(short_title)}</li><ul>']
 
-    for part, subs in part_tree:
-        part_short = extract_chapter_short_name(part.get('title', ''), max_len=30)
-        core_q = part.get('core_question', '')
+    for ch, subs in chapter_tree:
+        ch_short = extract_chapter_short_name(ch.get('title', ''), max_len=30)
+        core_q = ch.get('core_question', '')
 
         if subs:
             # 有子章节：生成可折叠的一级节点
             html_parts.append(
                 f'<li class="level1"><details open>'
-                f'<summary>{escape_html(part_short)}</summary><ul>'
+                f'<summary>{escape_html(ch_short)}</summary><ul>'
             )
             for sub in subs:
                 sub_short = extract_chapter_short_name(sub.get('title', ''), max_len=25)
                 sub_q = sub.get('core_question', '')
                 # 过滤占位符
-                if sub_q and sub_q not in ('待分析', 'N/A', ''):
+                if sub_q and sub_q not in ('待分析', 'N/A', '', '加载失败'):
                     tooltip = f' title="{escape_html(sub_q)}"'
                 else:
                     tooltip = ''
@@ -160,25 +217,25 @@ def generate_mindmap(chapters, book_title="Book"):
             html_parts.append('</ul></details></li>')
         else:
             # 无子章节：用 core_question + key_points 作为子节点
-            # 过滤占位符内容（如"待分析"等未分析状态的默认值）
-            placeholder_values = {'待分析', 'N/A', 'n/a', ''}
+            # 过滤占位符内容
+            placeholder_values = {'待分析', 'N/A', 'n/a', '', '加载失败'}
             children = []
             if core_q and core_q not in placeholder_values:
                 children.append(f'<li class="level2">{escape_html(core_q)}</li>')
-            for kp in part.get('key_points', [])[:3]:
+            for kp in ch.get('key_points', [])[:3]:
                 if kp and kp not in placeholder_values:
                     children.append(f'<li class="level2">{escape_html(kp)}</li>')
 
             if children:
                 html_parts.append(
                     f'<li class="level1"><details open>'
-                    f'<summary>{escape_html(part_short)}</summary><ul>'
+                    f'<summary>{escape_html(ch_short)}</summary><ul>'
                 )
                 html_parts.extend(children)
                 html_parts.append('</ul></details></li>')
             else:
                 html_parts.append(
-                    f'<li class="level1">{escape_html(part_short)}</li>'
+                    f'<li class="level1">{escape_html(ch_short)}</li>'
                 )
 
     html_parts.append('</ul></li></ul></div>')
@@ -324,24 +381,54 @@ def generate_report_html(structure, chapters):
         num = ["①", "②", "③"][i-1]
         key_points_html += f'<div class="key-point"><span class="key-point-number">{num}</span>{escape_html(point)}</div>\n'
 
-    # 章节导航 - 跳过辅助内容
-    chapter_nav_html = ""
+    # 章节导航 - 只显示正文章节（有章节编号或者是主要章节）
+    def is_main_chapter_for_nav(ch):
+        """判断是否为主要章节（应在导航中显示）"""
+        # 有章节编号的
+        if ch.get('chapter_number'):
+            return True
+        # 或者是标题包含"第X章"的
+        title = ch.get('title', '')
+        import re
+        if re.search(r'第[\d一二三四五六七八九十]+章', title):
+            return True
+        if re.search(r'Chapter\s*\d+', title, re.I):
+            return True
+        # 或者是 level=1 且 chapter_type=main
+        if ch.get('level', 1) == 1 and ch.get('chapter_type') == 'main':
+            return True
+        return False
+
+    # 按章节编号排序，并去重（基于标题）
+    seen_titles = set()
+    unique_main_chapters = []
     for ch in chapters:
-        if ch.get('chapter_type') == 'aux':
-            continue
+        if is_main_chapter_for_nav(ch):
+            title = ch.get('title', '')
+            if title not in seen_titles:
+                seen_titles.add(title)
+                unique_main_chapters.append(ch)
+
+    # 按章节编号排序
+    main_chapters_for_nav = sorted(unique_main_chapters, key=lambda x: x.get('chapter_number') or x.get('index', 999))
+
+    chapter_nav_html = ""
+    for ch in main_chapters_for_nav:
         idx = ch['index']
         title = truncate(ch.get('title', ''), 30)
-        chapter_nav_html += f'<a href="#ch-{idx}" class="nav-item chapter-link">{title}</a>\n'
+        chapter_nav_html += f'<a href="#ch-{idx}" class="nav-item chapter-link">{escape_html(title)}</a>\n'
 
-    # 章节摘要 - 跳过辅助内容卡片
+    # 章节摘要 - 只显示正文章节，按章节编号排序，并去重
     chapter_summaries_html = ""
-    for ch in chapters:
+    for ch in main_chapters_for_nav:
         # 辅助内容章节不生成详细卡片（避免满屏"待分析"/"暂无"等无效内容）
-        if ch.get('chapter_type') == 'aux':
-            continue
         idx = ch['index']
         sampled = ch.get('sampled', False)
         sampled_tag = ' <small style="color:var(--text-secondary)">[采样]</small>' if sampled else ''
+
+        # 使用正确的页码信息（从加载的JSON或结构信息）
+        start_page = ch.get('start_page', 0)
+        end_page = ch.get('end_page', 0)
 
         # 关键论点
         kp_list = ""
@@ -370,7 +457,7 @@ def generate_report_html(structure, chapters):
             quotes_html += f'<div class="quote"><p>{escape_html(quote_text)}</p><div class="quote-source">p.{page}</div></div>\n'
 
         # 过滤占位符
-        placeholder_values = {'待分析', 'N/A', 'n/a', ''}
+        placeholder_values = {'待分析', 'N/A', 'n/a', '', '加载失败'}
         core_q = ch.get('core_question', '')
         arg_logic = ch.get('argument_logic', '')
 

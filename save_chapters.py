@@ -25,6 +25,8 @@ def save_chapters(output_dir: str, chapters_data):
     Args:
         output_dir: 输出目录
         chapters_data: 单章dict或多章list
+
+    注意：使用物理索引（index）保存文件，而非章节编号（chapter_number）
     """
     # 确保是列表
     if isinstance(chapters_data, dict):
@@ -32,24 +34,50 @@ def save_chapters(output_dir: str, chapters_data):
     else:
         chapters = chapters_data
 
+    # 加载 book_structure.json 以获取索引映射
+    structure_path = os.path.join(output_dir, "book_structure.json")
+    index_to_chapter = {}
+    if os.path.exists(structure_path):
+        with open(structure_path, 'r', encoding='utf-8') as f:
+            structure = json.load(f)
+        # 建立标题到索引的映射
+        for s_ch in structure.get('chapters', []):
+            index_to_chapter[s_ch['title']] = s_ch['index']
+
     # 保存每个章节
     for ch in chapters:
-        idx = ch.get('index', ch.get('chapter_index', 1))
+        # 优先使用 chapter_index 字段，其次使用 index 字段
+        idx = ch.get('chapter_index') or ch.get('index')
+
+        # 如果提供了标题且能匹配到结构中的索引，使用结构中的索引
+        title = ch.get('title', '')
+        if title and title in index_to_chapter:
+            idx = index_to_chapter[title]
+
+        if not idx:
+            idx = 1
+
         json_file = os.path.join(output_dir, f"chapter_{idx:02d}.json")
         with open(json_file, 'w', encoding='utf-8') as f:
             json.dump(ch, f, ensure_ascii=False, indent=2)
         print(f"Saved: {json_file}")
 
     # 更新 book_structure.json
-    structure_path = os.path.join(output_dir, "book_structure.json")
     if os.path.exists(structure_path):
         with open(structure_path, 'r', encoding='utf-8') as f:
             structure = json.load(f)
 
         for ch in chapters:
-            idx = ch.get('index', ch.get('chapter_index', 1))
+            # 同样优先使用 chapter_index 或匹配的标题索引
+            idx = ch.get('chapter_index') or ch.get('index')
+            title = ch.get('title', '')
+            if title and title in index_to_chapter:
+                idx = index_to_chapter[title]
+            if not idx:
+                idx = ch.get('index', 1)
+
             for s_ch in structure.get('chapters', []):
-                if s_ch['index'] == idx:
+                if s_ch['index'] == idx or s_ch.get('title') == title:
                     s_ch['json_file'] = os.path.join(output_dir, f"chapter_{idx:02d}.json")
                     s_ch['status'] = 'done'
                     break

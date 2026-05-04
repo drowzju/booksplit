@@ -140,14 +140,14 @@ class PDFBookAnalyzer:
         """
         从指定页面范围（0-indexed）提取文本。
 
-        sample=True 时启用按比例采样，适用于超长章节（>100页），
+        sample=True 时启用按比例采样，适用于超长章节（>150页），
         策略：前20% + 中间40%中心区域 + 后20%，其余页只保留各段落首句。
         采样时在文本开头附加 [SAMPLED] 标记供调用方识别。
         """
         end_page = min(end_page, self.total_pages - 1)
         page_count = end_page - start_page + 1
 
-        if not sample or page_count <= 100:
+        if not sample or page_count <= 150:
             parts = []
             for p in range(start_page, end_page + 1):
                 text = self.doc[p].get_text()
@@ -286,6 +286,7 @@ class PDFBookAnalyzer:
 
         chapters = []
         ch_index = 1
+        main_chapter_counter = 0  # 正文章节计数器（第X章）
 
         for i, l1_item in enumerate(level1_items):
             # 计算一级部分的页数
@@ -300,6 +301,13 @@ class PDFBookAnalyzer:
 
             # 识别一级部分类型
             l1_type = self._get_chapter_type(l1_item["title"])
+
+            # 正文章节计数（用于生成章节编号）
+            if l1_type == 'main':
+                main_chapter_counter += 1
+                l1_chapter_number = main_chapter_counter
+            else:
+                l1_chapter_number = None
 
             # 如果一级部分页数超过阈值且有二级章节，则使用二级章节
             if l1_page_count > large_section_threshold and level2_items:
@@ -326,6 +334,7 @@ class PDFBookAnalyzer:
                         "status": "pending",
                         "json_file": None,
                         "txt_file": None,
+                        "chapter_number": l1_chapter_number,  # 正文章节编号
                     })
                     ch_index += 1
 
@@ -354,6 +363,7 @@ class PDFBookAnalyzer:
                             "status": "pending",
                             "json_file": None,
                             "txt_file": None,
+                            "parent_chapter_number": l1_chapter_number,  # 关联到父章节编号
                         })
                         ch_index += 1
                     continue  # 跳过默认的一级部分处理
@@ -372,6 +382,7 @@ class PDFBookAnalyzer:
                 "status": "pending",
                 "json_file": None,
                 "txt_file": None,
+                "chapter_number": l1_chapter_number,  # 正文章节编号（如果是main类型）
             })
             ch_index += 1
 
