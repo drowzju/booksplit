@@ -35,8 +35,12 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
     with open(structure_path, 'r', encoding='utf-8') as f:
         structure = json.load(f)
 
-    # 首先扫描所有存在的章节JSON文件，建立标题到文件路径的映射
-    title_to_file = {}
+    # 首先扫描所有存在的章节JSON文件，建立多重映射
+    # 策略：优先使用索引匹配，其次标题匹配，最后模糊匹配
+    index_to_file = {}      # 索引 -> 文件路径
+    title_to_file = {}      # 标题 -> 文件路径
+    fuzzy_title_map = {}    # 简化标题 -> 文件路径（用于模糊匹配）
+
     for filename in os.listdir(output_dir):
         if filename.startswith('chapter_') and filename.endswith('.json') and filename != 'chapter_analysis_result.json':
             filepath = os.path.join(output_dir, filename)
@@ -44,8 +48,19 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
                 with open(filepath, 'r', encoding='utf-8') as f:
                     ch_data = json.load(f)
                     title = ch_data.get('title', '')
+                    idx = ch_data.get('chapter_index') or ch_data.get('index')
+
+                    # 建立索引映射（最可靠）
+                    if idx:
+                        index_to_file[idx] = filepath
+
+                    # 建立标题映射
                     if title:
                         title_to_file[title] = filepath
+                        # 同时建立简化标题映射（去除"第X章"前缀用于模糊匹配）
+                        simplified = simplify_title(title)
+                        if simplified:
+                            fuzzy_title_map[simplified] = filepath
             except Exception:
                 pass
 
@@ -59,11 +74,28 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
         idx = s_ch['index']
         title = s_ch.get('title', '')
 
-        # 优先通过标题匹配找到对应的JSON文件
-        ch_file = title_to_file.get(title)
+        # 多策略匹配：优先索引，其次精确标题，最后模糊匹配
+        ch_file = None
 
-        # 注意：不再使用索引命名作为回退，因为现有文件可能按章节编号命名而非物理索引
-        # 如果找不到匹配的标题文件，则视为未分析
+        # 策略1：通过索引匹配（最可靠，优先使用）
+        if idx in index_to_file:
+            ch_file = index_to_file[idx]
+
+        # 策略2：通过标题精确匹配
+        if not ch_file and title in title_to_file:
+            ch_file = title_to_file[title]
+
+        # 策略3：通过简化标题模糊匹配
+        if not ch_file:
+            simplified = simplify_title(title)
+            if simplified and simplified in fuzzy_title_map:
+                ch_file = fuzzy_title_map[simplified]
+
+        # 策略4：尝试按文件名模式匹配（chapter_XX.json）
+        if not ch_file:
+            expected_file = os.path.join(output_dir, f"chapter_{idx:02d}.json")
+            if os.path.exists(expected_file):
+                ch_file = expected_file
 
         if ch_file and os.path.exists(ch_file):
             try:
@@ -76,6 +108,9 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
                     ch['level'] = s_ch.get('level', 1)
                     ch['chapter_type'] = s_ch.get('chapter_type', 'unknown')
                     ch['chapter_number'] = s_ch.get('chapter_number')
+                    # 确保标题使用book_structure中的（更完整）
+                    if title and not ch.get('title'):
+                        ch['title'] = title
                     chapters.append(ch)
             except Exception as e:
                 print(f"Warning: Failed to load {ch_file}: {e}")
@@ -113,6 +148,31 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
             })
 
     return structure, chapters
+
+
+def simplify_title(title: str) -> str:
+    """
+    简化标题用于模糊匹配
+    去除"第X章"、"Chapter X"等前缀，保留核心内容
+    """
+    if not title:
+        return ''
+
+    import re
+
+    # 去除"第X章"前缀（支持中文数字和阿拉伯数字）
+    title = re.sub(r'^第[\d一二三四五六七八九十]+章[\s:：]*', '', title)
+
+    # 去除"Chapter X"前缀（不区分大小写）
+    title = re.sub(r'^Chapter\s*\d+[\s:：]*', '', title, flags=re.IGNORECASE)
+
+    # 去除"Part X"前缀
+    title = re.sub(r'^Part\s*[\dIVX]+[\s:：]*', '', title, flags=re.IGNORECASE)
+
+    # 去除首尾空白
+    title = title.strip()
+
+    return title
 
 
 def escape_html(text):
