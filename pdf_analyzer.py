@@ -103,7 +103,8 @@ class PDFBookAnalyzer:
 
         if not offsets:
             return {"offset": 0, "confidence": "low", "verified_by": None,
-                    "toc_page": None, "actual_page": None}
+                    "toc_page": None, "actual_page": None,
+                    "requires_confirmation": True}
 
         # 多数投票
         from collections import Counter
@@ -118,6 +119,7 @@ class PDFBookAnalyzer:
             "verified_by": best["verified_by"],
             "toc_page": best["toc_page"],
             "actual_page": best["actual_page"],
+            "requires_confirmation": confidence == "low"
         }
 
     def _title_keywords(self, title: str) -> List[str]:
@@ -143,16 +145,25 @@ class PDFBookAnalyzer:
         sample=True 时启用按比例采样，适用于超长章节（>150页），
         策略：前20% + 中间40%中心区域 + 后20%，其余页只保留各段落首句。
         采样时在文本开头附加 [SAMPLED] 标记供调用方识别。
+
+        若检测到扫描版PDF（文本极少），会添加 [SCAN_DETECTED] 标记。
         """
         end_page = min(end_page, self.total_pages - 1)
         page_count = end_page - start_page + 1
+
+        # OCR检测：检查首页文本量
+        first_page_text = self.doc[start_page].get_text()
+        if len(first_page_text.strip()) < 50:
+            scan_warning = "[SCAN_DETECTED] 警告：此页面文本极少，可能是扫描版PDF。建议对PDF进行OCR处理后再分析。\n\n"
+        else:
+            scan_warning = ""
 
         if not sample or page_count <= 150:
             parts = []
             for p in range(start_page, end_page + 1):
                 text = self.doc[p].get_text()
                 parts.append(f"--- Page {p + 1} ---\n{text}")
-            return "\n\n".join(parts)
+            return scan_warning + "\n\n".join(parts)
 
         # 采样模式：按比例划分区段
         front_end   = start_page + max(1, int(page_count * 0.20))
@@ -185,7 +196,7 @@ class PDFBookAnalyzer:
             sections += first_sentences(mid_end + 1, back_start - 1)
         sections += full_pages(back_start, end_page)
 
-        return "[SAMPLED]\n\n" + "\n\n".join(sections)
+        return scan_warning + "[SAMPLED]\n\n" + "\n\n".join(sections)
 
     def extract_chapter_to_file(self, start_page: int, end_page: int,
                                  output_path: str, sample: bool = False):
@@ -211,12 +222,14 @@ class PDFBookAnalyzer:
 
         title_lower = title.lower()
 
-        # 正文章节模式
+        # 正文章节模式 - 增强版，支持更多格式
         main_patterns = [
             r'第[\d一二三四五六七八九十]+[章部分]',  # 第X章、第一章
             r'chapter\s*[\dIVX]+',  # Chapter 1
             r'part\s*[\dIVX]+',      # Part I
             r'section\s*\d+',        # Section 1 (某些技术书籍)
+            r'^[\d一二三四五六七八九十]+\s+[一-龥]',  # "1 教育心理学" 纯数字/中文数字+空格+中文
+            r'^[\d一二三四五六七八九十]+[\.、\-]',    # "1.心理学" "1、心理学" "1-心理学"
         ]
 
         for pattern in main_patterns:
@@ -260,6 +273,103 @@ class PDFBookAnalyzer:
 
         return 'unknown'
 
+    def _cn_to_arabic(self, cn: str) -> int:
+        """中文数字转阿拉伯数字，支持到万位（如：二十一、一百零三、三千五百二十一万）"""
+        cn_nums = {'一':1, '二':2, '三':3, '四':4, '五':5,
+                   '六':6, '七':7, '八':8, '九':9, '零':0,
+                   '壹':1, '贰':2, '叁':3, '肆':4, '伍':5,
+                   '陆':6, '柒':7, '捌':8, '玖':9, '拾':10,
+                   '佰':100, '仟':1000, '万':10000}
+
+        if not cn:
+            return None
+
+        # 处理简单的一位数中文数字
+        if len(cn) == 1 and cn in cn_nums and cn_nums[cn] < 10:
+            return cn_nums[cn]
+
+        # 处理"十"开头的情况（如"十二"）
+        if len(cn) == 2 and cn[0] == '十' and cn[1] in cn_nums:
+            return 10 + cn_nums[cn[1]]
+
+        result = 0
+        temp = 0
+        last_unit = 1
+
+        for i, char in enumerate(cn):
+            if char in cn_nums:
+                num = cn_nums[char]
+                if num >= 10:  # 单位（十、百、千、万）
+                    if temp == 0:
+                        temp = 1
+                    result += temp * num
+                    temp = 0
+                    last_unit = num
+                else:  # 数字
+                    temp = num
+
+        result += temp
+        return result if result > 0 else None
+
+    def _extract_chapter_number(self, title: str) -> Optional[int]:
+        """
+        从标题中提取章节编号。
+        支持格式：第1章、第一章、1 标题、1.标题、Chapter 1等
+        """
+        import re
+
+        if not title:
+            return None
+
+        # 匹配模式列表，按优先级排序
+        patterns = [
+            (r'第\s*(\d+)\s*[章部分]', 1),                           # "第1章" -> 1
+            (r'^\s*(\d+)\s*[章部分]', 1),                           # "1章" 或 "1 章"
+            (r'^\s*(\d+)[\.\-、\s]\s*[\u4e00-\u9fff]', 1),          # "1.心理学" "1-心理学" "1 心理学"
+            (r'^\s*(\d+)\s+\w', 1),                                # "1 Title" (英文/数字标题)
+            (r'chapter\s*(\d+)', 1, re.IGNORECASE),                # "Chapter 1"
+            (r'part\s*([IVX]+)', 'roman', re.IGNORECASE),          # "Part I" (罗马数字)
+        ]
+
+        # 先尝试阿拉伯数字匹配
+        for pattern_info in patterns:
+            pattern = pattern_info[0]
+            group = pattern_info[1]
+            flags = pattern_info[2] if len(pattern_info) > 2 else 0
+
+            match = re.search(pattern, title, flags)
+            if match:
+                num_str = match.group(1)
+                if group == 'roman':
+                    # 罗马数字转换
+                    roman_nums = {'I':1, 'V':5, 'X':10}
+                    result = 0
+                    prev = 0
+                    for c in num_str.upper():
+                        curr = roman_nums.get(c, 0)
+                        if curr > prev:
+                            result += curr - 2 * prev
+                        else:
+                            result += curr
+                        prev = curr
+                    return result if result > 0 else None
+                else:
+                    try:
+                        return int(num_str)
+                    except ValueError:
+                        continue
+
+        # 尝试匹配中文数字（如"第一章"）
+        cn_pattern = r'第\s*([一二三四五六七八九十壹贰叁肆伍陆柒捌玖拾]+)\s*[章部分]'
+        cn_match = re.search(cn_pattern, title)
+        if cn_match:
+            cn_num = cn_match.group(1)
+            arabic = self._cn_to_arabic(cn_num)
+            if arabic:
+                return arabic
+
+        return None
+
     def analyze_book_structure(self, page_offset: int = 0, large_section_threshold: int = 100) -> Dict:
         """
         分析整本书结构，返回章节列表。
@@ -302,8 +412,11 @@ class PDFBookAnalyzer:
             # 识别一级部分类型
             l1_type = self._get_chapter_type(l1_item["title"])
 
-            # 正文章节计数（用于生成章节编号）
-            if l1_type == 'main':
+            # 提取章节编号（使用新的智能提取方法）
+            extracted_ch_num = self._extract_chapter_number(l1_item["title"])
+            if extracted_ch_num:
+                l1_chapter_number = extracted_ch_num
+            elif l1_type == 'main':
                 main_chapter_counter += 1
                 l1_chapter_number = main_chapter_counter
             else:
@@ -402,6 +515,7 @@ class PDFBookAnalyzer:
 
         for page_num in range(self.total_pages):
             page = self.doc[page_num]
+            found_chapter = False
             for block in page.get_text("dict")["blocks"]:
                 if "lines" not in block:
                     continue
@@ -423,7 +537,12 @@ class PDFBookAnalyzer:
                                     "txt_file": None,
                                 })
                                 current_start = page_num
+                            found_chapter = True
                             break
+                    if found_chapter:
+                        break
+                if found_chapter:
+                    break
 
         # 最后一章
         chapters.append({
@@ -473,7 +592,7 @@ class PDFBookAnalyzer:
             safe_title = re.sub(r'[-\s]+', '-', safe_title)
             out_path = os.path.join(
                 output_dir,
-                f"{self.pdf_name}_ch{ch['index']:02d}_{safe_title[:30]}.pdf"
+                f"{self.pdf_name}_split_{ch['index']:03d}_{safe_title[:30]}.pdf"
             )
             doc_part.save(out_path)
             doc_part.close()
@@ -563,7 +682,7 @@ Commands:
         elif command == "split":
             out_dir = positional[0] if positional else "./book_chapters"
             files = analyzer.split_by_chapters(out_dir, page_offset=offset)
-            print(f"Split into {len(files)} chapters:")
+            print(f"Split into {len(files)} parts:")
             for f in files:
                 print(f"  {f}")
 
@@ -575,17 +694,17 @@ Commands:
             for ch in structure["chapters"]:
                 start = ch["start_page"] - 1   # 0-indexed
                 end   = ch["end_page"] - 1
-                # 默认不采样，只有显式传入 --sample 时才采样
-                do_sample = use_sample
+                # 自动采样：显式传入 --sample 或章节超过150页
+                do_sample = use_sample or (ch["page_count"] > 150)
                 safe_title = re.sub(r'[^\w\s-]', '', ch["title"]).strip()
                 safe_title = re.sub(r'[-\s]+', '-', safe_title)
                 out_path = os.path.join(
                     out_dir,
-                    f"{analyzer.pdf_name}_ch{ch['index']:02d}_{safe_title[:30]}.txt"
+                    f"{analyzer.pdf_name}_split_{ch['index']:03d}_{safe_title[:30]}.txt"
                 )
                 analyzer.extract_chapter_to_file(start, end, out_path, sample=do_sample)
                 sampled_flag = " [sampled]" if do_sample else ""
-                print(f"  ch{ch['index']:02d} ({ch['page_count']}p{sampled_flag}) -> {out_path}")
+                print(f"  split_{ch['index']:03d} ({ch['page_count']}p{sampled_flag}) -> {out_path}")
                 created.append(out_path)
             print(f"Done. {len(created)} text files written to {out_dir}/")
 

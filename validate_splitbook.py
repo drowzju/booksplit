@@ -109,14 +109,18 @@ class SplitbookValidator:
         if failed:
             self.add("WARN", f"有 {len(failed)} 个章节分析失败: {', '.join(c['title'] for c in failed[:3])}")
 
-        # 检查JSON文件存在性
+        # 检查JSON文件存在性（支持相对路径和绝对路径）
         missing_json = []
         for ch in main_chapters:
             json_file = ch.get('json_file')
             if json_file:
+                # 优先作为相对路径处理
                 json_path = self.output_dir / json_file
                 if not json_path.exists():
-                    missing_json.append(ch['title'])
+                    # 回退：作为绝对路径检查
+                    json_path = Path(json_file)
+                    if not json_path.exists():
+                        missing_json.append(ch['title'])
 
         if missing_json:
             self.add("WARN", f"缺少章节JSON文件: {', '.join(missing_json[:3])}")
@@ -194,6 +198,9 @@ class SplitbookValidator:
             for ch in self.structure_data.get('chapters', [])[:5]:
                 if ch.get('status') == 'done' and ch.get('json_file'):
                     json_path = self.output_dir / ch['json_file']
+                    if not json_path.exists():
+                        # 回退：作为绝对路径检查
+                        json_path = Path(ch['json_file'])
                     if json_path.exists():
                         try:
                             with open(json_path, 'r', encoding='utf-8') as f:

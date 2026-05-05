@@ -35,11 +35,35 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
     with open(structure_path, 'r', encoding='utf-8') as f:
         structure = json.load(f)
 
+    # 从book_structure.json建立索引到章节编号的映射
+    index_to_chapter_num = {}     # index -> chapter_number
+    chapter_num_to_index = {}     # chapter_number -> index
+    title_to_chapter_num = {}     # 标题 -> chapter_number
+
+    for s_ch in structure.get('chapters', []):
+        idx = s_ch.get('index')
+        ch_num = s_ch.get('chapter_number')
+        title = s_ch.get('title', '')
+
+        # 确保 chapter_number 是整数
+        if ch_num is not None:
+            try:
+                ch_num = int(ch_num)
+            except (ValueError, TypeError):
+                ch_num = None
+
+        if idx and ch_num:
+            index_to_chapter_num[idx] = ch_num
+            chapter_num_to_index[ch_num] = idx
+        if title and ch_num:
+            title_to_chapter_num[title] = ch_num
+
     # 首先扫描所有存在的章节JSON文件，建立多重映射
-    # 策略：优先使用索引匹配，其次标题匹配，最后模糊匹配
-    index_to_file = {}      # 索引 -> 文件路径
-    title_to_file = {}      # 标题 -> 文件路径
-    fuzzy_title_map = {}    # 简化标题 -> 文件路径（用于模糊匹配）
+    # 策略：优先使用chapter_number匹配，其次索引匹配，最后标题匹配
+    chapter_num_to_file = {}  # chapter_number -> 文件路径
+    index_to_file = {}        # index -> 文件路径
+    title_to_file = {}        # 标题 -> 文件路径
+    fuzzy_title_map = {}      # 简化标题 -> 文件路径（用于模糊匹配）
 
     for filename in os.listdir(output_dir):
         if filename.startswith('chapter_') and filename.endswith('.json') and filename != 'chapter_analysis_result.json':
@@ -49,8 +73,20 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
                     ch_data = json.load(f)
                     title = ch_data.get('title', '')
                     idx = ch_data.get('chapter_index') or ch_data.get('index')
+                    ch_num = ch_data.get('chapter_number')
 
-                    # 建立索引映射（最可靠）
+                    # 确保 chapter_number 是整数
+                    if ch_num is not None:
+                        try:
+                            ch_num = int(ch_num)
+                        except (ValueError, TypeError):
+                            ch_num = None
+
+                    # 优先建立chapter_number映射（最可靠，对应书中实际章节）
+                    if ch_num:
+                        chapter_num_to_file[ch_num] = filepath
+
+                    # 建立索引映射（后备方案）
                     if idx:
                         index_to_file[idx] = filepath
 
@@ -73,29 +109,66 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
 
         idx = s_ch['index']
         title = s_ch.get('title', '')
+        ch_num = s_ch.get('chapter_number')  # 从结构获取章节编号
 
-        # 多策略匹配：优先索引，其次精确标题，最后模糊匹配
+        # 新增：如果structure中没有chapter_number，尝试从标题提取
+        if ch_num is None:
+            ch_num = extract_chapter_number_from_title(title)
+            if ch_num:
+                s_ch['chapter_number'] = ch_num  # 更新structure
+
+        # 多策略匹配：优先chapter_number，其次索引，最后标题
         ch_file = None
 
-        # 策略1：通过索引匹配（最可靠，优先使用）
-        if idx in index_to_file:
+        # 策略1：通过chapter_number匹配（最可靠，优先使用）
+        if ch_num and ch_num in chapter_num_to_file:
+            ch_file = chapter_num_to_file[ch_num]
+
+        # 策略2：通过index查找chapter_number后再匹配
+        if not ch_file and idx in index_to_chapter_num:
+            mapped_ch_num = index_to_chapter_num[idx]
+            if mapped_ch_num in chapter_num_to_file:
+                ch_file = chapter_num_to_file[mapped_ch_num]
+
+        # 策略3：通过标题查找chapter_number
+        if not ch_file and title:
+            if title in title_to_chapter_num:
+                mapped_ch_num = title_to_chapter_num[title]
+                if mapped_ch_num in chapter_num_to_file:
+                    ch_file = chapter_num_to_file[mapped_ch_num]
+
+        # 策略4：通过索引匹配（后备方案）
+        if not ch_file and idx in index_to_file:
             ch_file = index_to_file[idx]
 
-        # 策略2：通过标题精确匹配
+        # 策略5：通过标题精确匹配
         if not ch_file and title in title_to_file:
             ch_file = title_to_file[title]
 
-        # 策略3：通过简化标题模糊匹配
+        # 策略6：通过简化标题模糊匹配
         if not ch_file:
             simplified = simplify_title(title)
             if simplified and simplified in fuzzy_title_map:
                 ch_file = fuzzy_title_map[simplified]
 
-        # 策略4：尝试按文件名模式匹配（chapter_XX.json）
+        # 策略7：尝试按文件名模式匹配（chapter_{chapter_number:02d}.json）
+        if not ch_file and ch_num:
+            expected_file = os.path.join(output_dir, f"chapter_{ch_num:02d}.json")
+            if os.path.exists(expected_file):
+                ch_file = expected_file
+
+        # 策略8：回退到index模式（chapter_{index:02d}.json，向后兼容）
         if not ch_file:
             expected_file = os.path.join(output_dir, f"chapter_{idx:02d}.json")
             if os.path.exists(expected_file):
                 ch_file = expected_file
+
+        # 策略9：处理json_file字段为相对路径的情况
+        if ch_file and not os.path.exists(ch_file):
+            # 尝试作为相对路径解析
+            alt_path = os.path.join(output_dir, os.path.basename(ch_file))
+            if os.path.exists(alt_path):
+                ch_file = alt_path
 
         if ch_file and os.path.exists(ch_file):
             try:
@@ -107,7 +180,7 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
                     ch['index'] = idx
                     ch['level'] = s_ch.get('level', 1)
                     ch['chapter_type'] = s_ch.get('chapter_type', 'unknown')
-                    ch['chapter_number'] = s_ch.get('chapter_number')
+                    ch['chapter_number'] = ch_num  # 确保使用结构中的章节编号
                     # 确保标题使用book_structure中的（更完整）
                     if title and not ch.get('title'):
                         ch['title'] = title
@@ -116,12 +189,12 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
                 print(f"Warning: Failed to load {ch_file}: {e}")
                 chapters.append({
                     'index': idx,
-                    'title': title or f'Chapter {idx}',
+                    'title': title or f'Chapter {ch_num or idx}',
                     'start_page': s_ch.get('start_page', 0),
                     'end_page': s_ch.get('end_page', 0),
                     'level': s_ch.get('level', 1),
                     'chapter_type': s_ch.get('chapter_type', 'unknown'),
-                    'chapter_number': s_ch.get('chapter_number'),
+                    'chapter_number': ch_num,
                     'status': 'failed',
                     'core_question': '加载失败',
                     'key_points': [],
@@ -133,12 +206,12 @@ def load_chapters(output_dir: str, use_level1_only: bool = False):
             # 章节分析结果不存在，使用结构信息创建占位
             chapters.append({
                 'index': idx,
-                'title': title or f'Chapter {idx}',
+                'title': title or f'Chapter {ch_num or idx}',
                 'start_page': s_ch.get('start_page', 0),
                 'end_page': s_ch.get('end_page', 0),
                 'level': s_ch.get('level', 1),
                 'chapter_type': s_ch.get('chapter_type', 'unknown'),
-                'chapter_number': s_ch.get('chapter_number'),
+                'chapter_number': ch_num,
                 'status': 'pending',
                 'core_question': '待分析',
                 'key_points': [],
@@ -173,6 +246,46 @@ def simplify_title(title: str) -> str:
     title = title.strip()
 
     return title
+
+
+def extract_chapter_number_from_title(title: str) -> int:
+    """
+    从标题中提取章节编号。
+    支持格式：第1章、第一章、1 标题、1.标题、Chapter 1等
+    """
+    import re
+
+    if not title:
+        return None
+
+    # 匹配模式列表
+    patterns = [
+        r'第\s*(\d+)\s*[章部分]',               # "第1章"
+        r'^\s*(\d+)\s*[章部分\-\s]',           # "1章" "1-"
+        r'^\s*(\d+)[\.\-、]\s*[\u4e00-\u9fff]',  # "1.心理学" "1-心理学"
+        r'^\s*(\d+)\s+[\u4e00-\u9fff]',        # "1 心理学"
+        r'chapter\s*(\d+)',                      # "Chapter 1"
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, title, re.IGNORECASE)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                continue
+
+    # 中文数字
+    cn_pattern = r'第\s*([一二三四五六七八九十]+)\s*[章部分]'
+    cn_match = re.search(cn_pattern, title)
+    if cn_match:
+        cn_nums = {'一':1, '二':2, '三':3, '四':4, '五':5,
+                   '六':6, '七':7, '八':8, '九':9, '十':10}
+        num_str = cn_match.group(1)
+        if len(num_str) == 1 and num_str in cn_nums:
+            return cn_nums[num_str]
+
+    return None
 
 
 def escape_html(text):
@@ -421,16 +534,36 @@ def generate_report_html(structure, chapters):
     all_key_points = []
     all_cases = []
     all_quotes = []
-    all_entities = {'people': set(), 'companies': set(), 'events': set()}
+    all_entities = {'people': [], 'companies': [], 'events': []}
 
     for ch in chapters:
         all_key_points.extend(ch.get('key_points', []))
         all_cases.extend(ch.get('key_cases', []))
         all_quotes.extend(ch.get('key_quotes', []))
         entities = ch.get('entities', {})
-        all_entities['people'].update(entities.get('people', []))
-        all_entities['companies'].update(entities.get('companies', []))
-        all_entities['events'].update(entities.get('events', []))
+        # 提取人名（支持字符串或字典格式）
+        for p in entities.get('people', []):
+            if isinstance(p, dict):
+                all_entities['people'].append(p.get('name', ''))
+            elif isinstance(p, str):
+                all_entities['people'].append(p)
+        # 提取公司名
+        for c in entities.get('companies', []):
+            if isinstance(c, dict):
+                all_entities['companies'].append(c.get('name', ''))
+            elif isinstance(c, str):
+                all_entities['companies'].append(c)
+        # 提取事件名
+        for e in entities.get('events', []):
+            if isinstance(e, dict):
+                all_entities['events'].append(e.get('name', ''))
+            elif isinstance(e, str):
+                all_entities['events'].append(e)
+
+    # 去重
+    all_entities['people'] = list(set(all_entities['people']))
+    all_entities['companies'] = list(set(all_entities['companies']))
+    all_entities['events'] = list(set(all_entities['events']))
 
     # 取前3个关键论点
     top_points = all_key_points[:3] if all_key_points else ['待补充关键论点']
@@ -454,6 +587,9 @@ def generate_report_html(structure, chapters):
             return True
         if re.search(r'Chapter\s*\d+', title, re.I):
             return True
+        # 新增：支持纯数字开头的标题（如"1 教育心理学"）
+        if re.search(r'^[\d一二三四五六七八九十]+[\s\.\-、]', title):
+            return True
         # 或者是 level=1 且 chapter_type=main
         if ch.get('level', 1) == 1 and ch.get('chapter_type') == 'main':
             return True
@@ -469,8 +605,20 @@ def generate_report_html(structure, chapters):
                 seen_titles.add(title)
                 unique_main_chapters.append(ch)
 
-    # 按章节编号排序
-    main_chapters_for_nav = sorted(unique_main_chapters, key=lambda x: x.get('chapter_number') or x.get('index', 999))
+    # 按章节编号排序（如果chapter_number缺失，尝试从标题提取）
+    def get_sort_key(ch):
+        ch_num = ch.get('chapter_number')
+        if ch_num:
+            return (0, int(ch_num))
+        # 尝试从标题提取
+        title = ch.get('title', '')
+        extracted = extract_chapter_number_from_title(title)
+        if extracted:
+            return (0, extracted)
+        # 最后按index排序
+        return (1, ch.get('index', 999))
+
+    main_chapters_for_nav = sorted(unique_main_chapters, key=get_sort_key)
 
     chapter_nav_html = ""
     for ch in main_chapters_for_nav:
